@@ -1,0 +1,466 @@
+<?php
+// $Id:
+
+/**
+ * Implementation of hook_perm().
+ */
+function om_timeslot_autoschedule_perm() {
+  return array('access content', 'administer Open Media System');
+} // function om_timeslot_pairings_perm
+
+
+
+/**
+ * Implementation of hook_help().
+ */
+function om_timeslot_autoschedule_help($section) {
+  switch ($section) {
+    case 'admin/help#timeslot_autoschedule':
+      return t('Timeslot functions for auto scheduling.');
+      break;
+  }
+}
+
+/**
+ * Implementation of hook_node_info().
+ */
+function om_timeslot_autoschedule_node_info() {
+  return array(
+    'om_timeslot_rule' => array(
+      'name' => t('Show'),
+      'module' => 'om_timeslot_autoschedule',
+      'has_title' => TRUE,
+      'title_label' => 'Title',
+      'has_body' => TRUE,
+      'body_label' => 'SQL',
+      'description' => t("<b>Open Media System</b> - This content type is used to store SQL for creating a pool of potential shows to schedule into a Timeslot Event."),
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_form().
+ *
+ */
+function om_timeslot_autoschedule_form(&$node, $form_state) {
+  $type = node_get_types('type', $node);
+
+  if ($type->has_title) {
+    $form['title'] = array(
+      '#type' => 'textfield',
+      '#title' => check_plain($type->title_label),
+      '#required' => TRUE,
+      '#default_value' => $node->title,
+      '#weight' => -5
+    );
+  }
+
+  if ($type->has_body) {
+    $form['body_field'] = node_body_field($node, $type->body_label, $type->min_word_count);
+  }
+
+  return $form;
+}
+
+
+/**
+ * Implementation of hook_menu().
+ */
+
+function om_timeslot_autoschedule_menu() {
+  $items = array();
+  
+  $items['admin/openmedia/om-timeslot-autoschedule'] = array(
+    'title' => 'Timeslot Autoschedule Configuration',
+    'description' => 'Configuration options for Timeslot Autoschedule.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('om_timeslot_autoschedule_admin_settings'),
+    'access arguments' => array('access administration pages'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  
+  $items['node/%node/autoschedule'] = array(
+    'title' => 'Preview Results',
+    'description' => 'Takes node and returns list of shows that would be scheduled.',
+    'page callback' => 'om_timeslot_autoschedule_preview',
+    'page arguments' => array(1,3,4,5,6,7),
+    'access callback' => 'om_timeslot_autoschedule_access',
+    'access arguments' => array(1),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 9,
+  );
+  
+  
+  $items['autoschedule/csv'] = array(
+    'title' => 'Preview CSV',
+    'description' => 'Takes start, end,  and show_list. returns csv of shows',
+    'page callback' => 'om_timeslot_autoschedule_format_csv',
+    'page arguments' => array(2,3,4,5),
+    'access arguments' => array('manage scheduling'),
+    'type' => MENU_CALLBACK,
+  );
+  
+   $items['autoschedule/bulk_transfer'] = array(
+    'title' => 'Process Transfers for a list of shows',
+    'description' => 'Takes list of shows and tid, executes tansfers for show that are not already on the server',
+    'page callback' => 'om_timeslot_autoschedule_bulk_transfer',
+    'page arguments' => array(2,3),
+    'access arguments' => array('manage scheduling'),
+    'type' => MENU_CALLBACK,
+  );
+  
+ 
+  
+  
+  return $items;
+}
+
+/**
+ * Builds the om_timeslot_autoschedule admininstration settings form.
+ */
+function om_timeslot_autoschedule_admin_settings() {
+  $form = array();
+  
+   $hours_description = t('<div>Enter military time for both start and end time of when autoschedule should be run, separated by a dash, in the format <em>hh:mm-hh:mm</em></div>ex. The autoscheduling process can impact server performance and should be run in off hours like <em>00:00-05:00</em> (12AM - 5AM).');
+  
+  $form['om_timeslot_autoschedule_hours'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Allow Autoschedule to Run on Cron During These Hours'),
+    '#default_value' => variable_get('om_timeslot_autoschedule_hours', '00:00-05:00'),
+    '#description' => $hours_description,
+  );
+  
+  return system_settings_form($form); 
+}
+
+function om_timeslot_autoschedule_access($node){
+  //watchdog('autoschedule', 'checking access');
+  if($node->type == 'om_timeslot_rule' || $node->type == 'om_timeslot_theme'  || $node->type == 'om_timeslot_event' || $node->type == 'om_timeslot_server'){
+   //watchdog('autoschedule', 'node is a ' . $node->type);
+    global $user;
+    
+    if( user_access('administer scheduling') || user_access('manage scheduling') || user_access('administer Open Media System') ){    
+       return TRUE;      
+     } else {    
+        return FALSE;        
+     }
+     
+  } else { 
+     return FALSE;
+  } // if node == om_timeslot_rule
+}
+
+
+/**
+  *  om_timeslot_autoschedule_preview 
+  *  #LK This area is under construction.
+  *  Custom function sets up display for auto scheduling preview page. Calls om_timeslot_autoschedule_process_rule()
+  *  @params $node rule, theme, or event node object REQUIRED
+  *  @params $te_nid timeslot event nid from calendar REQUIRED
+  *  @params $theme_nid nid of the timeslot theme if exists.
+  *  @params $start start date range REQUIRED
+  *  @params $end end deate range REQUIRED
+  *  @params $channel_tid tid of the channel, not the channel number REQUIRED
+  *  @returns printed theme as string
+  */
+
+function om_timeslot_autoschedule_preview($node, $te_nid, $theme_nid = NULL, $start, $end, $channel_tid){ 
+  //drupal_set_message('here is the rule node: ' . $node->nid . ' timeslot event nid: ' . $te_nid . ' theme nid: '.$theme_nid. ' Start: ' . $start . ' End: ' . $end . ' channel tid: ' . $channel_tid, 'error');
+  //if($node->type == 'om_timeslot_theme' || $node->type == 'om_timeslot_event'){ 
+  if($node->type == 'om_timeslot_theme'){
+    //get the rules for applied directly to this theme or event
+    $result = db_query("SELECT * FROM {content_field_om_timeslot_rule} JOIN node ON node.nid = field_om_timeslot_rule_nid WHERE content_field_om_timeslot_rule.nid = %d ORDER BY delta", $node->nid);
+    $output .= '<b>' . t('Rules:') . '</b><br />';
+    while ($theme_object = db_fetch_object($result)) {
+      $rulecount++;
+      $output .= l($theme_object->title, 'node/' . $theme_object->nid) . ' - ' . $theme_object->type . '<br />';
+      //run the rule
+    } // while
+    
+    
+    if(!$rulecount){
+      //if no rules on event, check defaults for the theme
+      if($node->type = 'om_timelsot_event'){
+        $theme_nid = $node->field_om_timeslot_theme[0]['value'];  
+      }
+      
+      //if no rules on theme, check defaults for the playback server
+      if($node->type = 'om_timelsot_theme'){
+        
+      }
+      
+    } 
+      
+  }//end if om_timeslot_theme or om_timeslot_event
+
+  if($node->type == 'om_timeslot_rule'){
+    $sql = $node->body;
+    $output .= 'Attempting to process rule...<br />';
+    
+    //***CURRENT_THEME***
+    
+    if(strstr($sql, '***CURRENT_THEME***') && !$theme_nid){
+      $error .= t('This Rule utilizes a Theme.  Results can only be previewed from a Timeslot Theme or Event.');
+      
+      $result = db_query("SELECT * FROM {node} WHERE type = 'om_timeslot_theme'");
+      
+      $output .= '<b>' . t('Process Rule on One of These Themes:') . '</b><br />';
+      while ($theme_object = db_fetch_object($result)) {
+        $output .= l($theme_object->title, 'node/' . $node->nid . '/autoschedule/' . $theme_object->nid) . ' - ' . $theme_object->type . '<br />';
+      } // while
+      
+     } else {
+     //either the rule doesn't use a theme or the theme_nid was passed
+       //dsm($node);
+      //$output .= om_timeslot_autoschedule_process_rule($sql, $days, $theme_nid = NULL);
+      
+      //$result = db_query("SELECT * FROM {content_field_om_timeslot_rule} JOIN node ON node.vid = content_field_om_timeslot_rule.vid WHERE field_om_timeslot_rule_nid = %d", $theme_nid);
+      
+      //while ($shows = db_fetch_object($result)) {
+        //if(!$header && $theme_object->title){
+         // $output .= '<b>' . t('Timeslot Themes, Events, and Servers Using This Rule') . '</b><br />';
+         // $header++;
+        //}
+        //$output .= l($theme_object->title, 'node/' . $theme_object->nid) . ' - ' . $theme_object->type . '<br />';
+      //} // while
+    }
+  
+ 
+  
+    if($error){
+      drupal_set_message($error, 'warning'); 
+    } else {
+      //dsm('$theme_nid = ' . $theme_nid);
+      $output .= om_timeslot_autoschedule_process_rule($sql, $te_nid, $node->field_om_timeslot_airing[0]['value'], $theme_nid, $start, $end, $channel_tid, $node->field_om_timeslot_concurrent[0]['value'] );
+      
+    }
+  } // end if om_timeslot_rule
+  print theme('page', $output);
+}
+
+/*
+ * om_timeslot_autoschedule_aired_days
+ * @param $nid show nid, int
+ * @param $days date value after which to check number of airings.(?)
+ * @returns boolean 
+ */
+ 
+
+function om_timeslot_autoschedule_aired_days($nid, $days){
+  //2009-07-30
+  $date = date("Y-m-d",strtotime($days . ' days ago'));
+  //print $date . '<br />';
+  $result = db_query("SELECT count(nid) as total FROM {content_type_om_airing} WHERE field_om_airing_pid_nid = %d AND field_om_airing_date_value > '%s'", $nid, $date);
+	$om_airings = db_fetch_object($result);
+	
+  if($om_airings->total){
+    return false;
+  } else {
+    return true;
+  }
+}
+
+/** 
+  * om_timeslot_autoschedule_process_rule
+  * #LK This area is under construction.
+  *   Custuom function cleans and attempts to run tokenzied rules. Currently the result of this function is a CSV link which must be 
+  *   manually inserted, and a call to om_timeslot_autoschedule_bulk_transfer (A bulk running of om_timeslot_princeton functions).
+  * 
+  * @params $sql the rule, string
+  * @params $te_nid timeslot event nid.
+  * @params $days (?)
+  * @params $theme_nid nid of the timeslot theme or event, int
+  * @params $start start date, timestamp 
+  * @params $end end date, timestamp
+  * @params $channel_tid tid of the channel taxonomy item (not the channel number), int
+  * @params $postprocess_project (?) Seems to be sent NULL everytime.
+  * @returns $output string
+ */
+
+function om_timeslot_autoschedule_process_rule ($sql, $te_nid, $days = NULL, $theme_nid = NULL, $start = 0, $end = 0, $channel_tid = 2, $postprocess_project = NULL) {
+  
+    //***NOW_-90_DAYS***
+    if(strstr($sql, '***NOW_')){
+      $sql = om_timeslot_scheduler_replace_time($sql); 
+    }
+    
+    if(strstr($sql, '***CURRENT_THEME***')){
+      $sql = om_timeslot_scheduler_replace_theme($sql, $theme_nid); 
+    }
+    
+    $sql = om_timeslot_scheduler_fix_sql($sql);
+    
+    $output .= t('If run now, Timeslot Autoschedule would attempt to schedule the following shows:') . '<br />';
+      $result = db_query($sql);
+   
+   //trim the first comma, from the list
+   
+   $show_list = ltrim($show_list, ',');
+   $show_list_linked = ltrim($show_list_linked, ',');
+   
+   // **PRINCETON** //
+   //Desperately need to add non-princeton specific checks
+   if (module_exists('om_timeslot_princeton')) {
+   
+   /**
+    * #LK CONSTRUCTION ZONE: Here we will take a list of shows and create temp airings for them.
+    * Then, after clikcing a link, we will call om_timeslot_om_timeslot_princeton_add_airin and om_timeslot_princeton_transfer
+    * for each one.
+    */
+    
+    /** 
+      * Create airings for date range if outsdie of current feed duration window. ie. Feed window is from now until 7 days from now. 
+      * If timeslot start > feed window create temp airings for that duration. Here we decided to manually create airings vs. use 
+      * use feed api due to the extremely custum nature of the following query strings.
+      */
+      
+    $feed_days_out = time()+(7*24*60*60); // is selected range greater than 7 days out?
+    
+    if($start > $feed_days_out || $end > $feed_days_out) {
+      
+      // build base url: channel.domain.org
+      
+      $channel = om_timeslot_scheduler_get_channel_name($channel_tid);
+      $base_url = $_SERVER['HTTP_HOST'];
+      
+      if (preg_match('/www/', $base_url)) {
+        $uri = str_replace('www', $channel, $base_url);
+      }
+      else {
+        $uri = $channel . '.' . $base_url;
+      }
+      
+      /**
+      * Construct path argument or query string for date range (format should be YYYYMMDD Ymd  or YYYYMMDDHHMMSS YmdHis)
+      * At least documentation shows YYYYMMDDHHMMSS to be acceptible. However currently doesn't seem to work. I'm 
+      * experimenting in this area.
+      */
+      $path_start = date('Ymd', $start. 'UTC');
+      $path_end = date('Ymd', ($end + (24*60*60)). 'UTC'); 
+      
+      $path = 'id=1*AND*start=' . $path_start . '*AND*end=' . $path_end;
+      
+      $path = '/'.$path;
+      
+      $base_url .= '/om_airing_feed/refactor/'.$uri.$path;
+      
+      drupal_set_message($base_url, 'error');
+      
+      $curl_handle = curl_init();
+      curl_setopt($curl_handle, CURLOPT_URL, $base_url);
+      $xml = curl_exec($curl_handle);
+      curl_close($curl_handle);
+      
+      print_r($xml);
+      
+      foreach ($xml_object as $item) {
+        //print $item -> startDate;
+      }
+      
+    }
+    // otherwise continue like normal.
+    
+    //$gaps = om_timeslot_scheduler_find_timeslot_event_openings($te_nid, $start, $end);
+    //print '<pre style="background-color:orange">';
+    //print_r($gaps);
+    //print '</pre>';
+    
+   }
+   return $output;
+}
+
+function om_timeslot_scheduler_replace_time($sql){
+      //$replace_array = array('***NOW_', '_', '***');
+      $time_array = explode('***NOW_', $sql);
+      //$output .= $time_array[1];
+      $time_array2 = explode('***', $time_array[1]);
+      $time = str_replace('_', " ", $time_array2[0]);
+      $formatted_time = date('Y-m-d H:m:s', strtotime($time));
+      $output .= 'time:' . $time . ' = ' . $formatted_time . '<br />';
+      
+      //2009-07-27 02:19:48
+      return $time_array[0] . $formatted_time . $time_array2[1];
+}
+
+function om_timeslot_scheduler_replace_theme($sql, $theme_nid){
+  return str_replace('***CURRENT_THEME***', $theme_nid, $sql);
+}
+
+function om_timeslot_scheduler_fix_sql($sql){
+  $sql = str_replace('&gt;', '>', $sql);
+  $sql = str_replace('&lt;', '<', $sql);
+  return $sql;
+}
+
+/** 
+  * om_timeslot_autoschedule_format_csv
+  * Custom function creates link to a Princeton scheduling CSV
+  *
+  * @param $start start date range, timestamp
+  * @param $end end date range, timestamp
+  * @param $show_list list of shows returned from rule, string
+  * @param $channel_tid tid of channel taxonomy term, not actual channel #
+  * @returns $output, string
+  */
+
+function om_timeslot_autoschedule_format_csv($start, $end = NULL, $show_list, $channel_tid = NULL){
+//Output,Date,Time,Type,Source ID,Source Name,Offset,Duration,Output Name,Program Code,Episode Code,Program,Title,Episode,Description,Preroll,Postroll,OSD,OSD Path,OSD File,Include In Guide,Track Content Attributes,Overlay Alpha Blend,Overlay Chroma Key,Overlay X Coordinate,Overlay Y Coordinate,Overlay Width,Overlay Height,Program Number,Switch Command
+ 
+//1,01-11-2010,10:59:44,PLAYOUT,69,bigmac.m2p,0.0,12,DOM 56,b0c34001bf68ff1406853853075c5814,,bigmac.m2p,,Big Mac,,0,0,false,,,true,true,,-1,0,0,720,480,,
+  
+  /*print '<pre> start: ';
+  print_r($start);
+  print '<br /> end: ';
+  print_r($end);
+  print '<br /> show list: ';
+  print_r($show_list);
+  print '<br /> channel tid: ' ;
+  print_r($channel_tid);
+  print '</pre>';*/
+  
+  if(!$start){
+  $output .= '<i>ERROR: No start time included.  Setting start to now for testing.</i><br />';
+  $start = time();
+  }
+  $type = 'PLAYOUT';
+  $show_array = explode(',', $show_list);
+ 
+  $output .= "Output,Date,Time,Type,Source ID,Source Name,Offset,Duration,Output Name,Program Code,Episode Code,Program,Title,Episode,Description,Preroll,Postroll,OSD,OSD Path,OSD File,Include In Guide,Track Content Attributes,Overlay Alpha Blend,Overlay Chroma Key,Overlay X Coordinate,Overlay Y Coordinate,Overlay Width,Overlay Height,Program Number,Switch Command\n";
+  
+  foreach ($show_array as $show) {
+    $node = node_load($show);
+    /*
+     * #LK I'm thinking this is where some sort of gap chcecking could/should go. Also, this is EXTREMELY princeton specific.
+     */
+    if($node->field_om_show_duration[0][value]){
+      //print $start . ' < ' . $end;  
+      if($start < $end){
+        $output .= "1," . date('m-d-Y', $start) . "," . date('H:i:s', $start) . ",PLAYOUT,," . $node-> field_om_show_mpeg2[0][filename] . ",0.0," . $node->field_om_show_duration[0][value] . ".0," . $channel_name . "\n";
+      //print $start . ' + ' . $node->field_om_show_duration[0][value] . ' = ' . ($start + $node->field_om_show_duration[0][value]) . '<br />';
+        $start = $start + $node->field_om_show_duration[0][value];
+      }
+    }
+  }
+ 
+  print $output;
+
+}
+
+function om_timeslot_autoschedule_bulk_transfer($show_list, $channel_tid){
+
+  
+  $server = om_timeslot_scheduler_get_servers($channel_tid);
+  
+  $show_array = explode(',', $show_list);
+  foreach ($show_array as $show) {
+    $node = node_load($show);
+
+    if(om_timeslot_princeton_check_existing($node->field_om_show_mpeg2[0]['filename'], $server->field_om_timeslot_server_uri_value)){
+      $output .= t('Show already exists on this server, ready to schedule') . '<br />';
+    } else {
+      $output .= om_timeslot_princeton_transfer($node, $channel_tid) . '<br />';
+    }
+  }
+  print theme('page', $output);
+  
+}

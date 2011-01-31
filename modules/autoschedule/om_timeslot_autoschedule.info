@@ -1,0 +1,7 @@
+name = Open Media Timeslot Autoschedule
+description = Timeslot functions for Autoscheduling
+package = Open Media System
+dependencies[] = om_timeslot_scheduler
+core = 6.x
+
+

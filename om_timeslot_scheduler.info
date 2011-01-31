@@ -1,0 +1,16 @@
+name = Open Media Timeslot Scheduler
+description = Core Timeslot and Scheduling functions 
+package = Open Media System
+dependencies[] = content
+dependencies[] = content_copy
+dependencies[] = fieldgroup
+dependencies[] = date_api
+dependencies[] = date_repeat
+dependencies[] = taxonomy
+dependencies[] = nodereference
+dependencies[] = colorpicker
+dependencies[] = colorpicker_cck
+dependencies[] = calendar
+core = 6.x
+
+

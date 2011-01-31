@@ -1,0 +1,90 @@
+<?php
+// $Id$ 
+
+/**
+* Implementation of hook_install().
+*/
+function om_timeslot_scheduler_install() {
+
+  drupal_set_message(t('Open Media Timeslot Scheduler module successfully installed. om_timeslot_theme and om_timeslot_event content types created.'));
+
+}
+
+function om_timeslot_scheduler_enable(){    
+
+  //module isn't enabled on install, calling this processes node_info so node types are created before processing create_content_types()
+  //this keeps the content type tied to the module, but simplifies the process of adding fields
+  drupal_load('module', 'om_timeslot_scheduler');
+  
+  // create content types
+  include_once('./'. drupal_get_path('module', 'om_timeslot_scheduler') .'/includes/content_types/content_types.inc');
+  _om_timeslot_scheduler_install_create_content_types();
+
+  om_timeslot_scheduler_add_taxonomy();
+  
+} // function om_timeslot_scheduler_install
+
+
+/**
+* Implementation of hook_uninstall().
+*/
+function om_timeslot_scheduler_uninstall() {
+
+  // delete timeslot themes and events
+  $result = db_query("SELECT nid FROM {node} WHERE type = 'om_timeslot_theme' OR type = 'om_timeslot_event'");
+  while ($node = db_fetch_object($result)) {
+    node_delete($node->nid);
+  }
+  
+  // delete CCK content_types
+  $return = node_type_delete('om_timeslot_theme');
+  $return = node_type_delete('om_timeslot_event');
+
+  drupal_set_message(t('Open Media Timeslot Scheduler module successfully uninstalled.  om_timeslot_theme and om_timeslot_event nodes deleted.'));
+} // om_timeslot_scheduler_uninstall
+
+function om_timeslot_scheduler_add_taxonomy() {
+
+  //check for existing Channel vocabulary 
+  $channels_vocabulary = om_timeslot_scheduler_get_vocabulary_by_name('Channels');
+  
+  $channels_nodes['om_timeslot_event'] = 1;
+  
+  if ($channels_vocabulary->vid) {
+    //if it exists, add vid so existing vocabulary is updated
+    
+    //add existing content types the vocabulary is already associated with
+    foreach ($channels_vocabulary->nodes as $node) {
+      $channels_nodes[$node] = 1; 
+    }
+    $vocabulary = array(
+      'name' => t('Channels'),
+      'vid' => $channels_vocabulary->vid,
+      'multiple' => 0,
+      'required' => 0,
+      'hierarchy' => 0,
+      'relations' => 0,
+      'module' => $channels_vocabulary->module,
+      'weight' => -10,
+      'nodes' => $channels_nodes,
+    );
+   }
+   else { 
+     //create a new Channels vocabulary
+     $vocabulary = array(
+       'name' => t('Channels'),
+       'multiple' => 0,
+       'required' => 0,
+       'hierarchy' => 0,
+       'relations' => 0,
+       'module' => 'om_timeslot_scheduler',
+       'weight' => -10,
+       'nodes' => $channels_nodes,
+     );
+   } 
+   
+  taxonomy_save_vocabulary($vocabulary);
+  $vid = $vocabulary['vid'];
+  variable_set('om_timeslot_scheduler_channels_vid', $vid);
+}
+
